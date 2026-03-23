@@ -1,0 +1,22 @@
+{
+  "out_root": "acecamp-raw",
+  "source_dir": "source",
+  "rendered_dir": "rendered",
+  "index_dir": "index",
+
+  "alert_channel": "openclaw-weixin",
+  "alert_target": "o9cq807IyVQr4MzNVQn-wki-DFno@im.wechat",
+  "alert_on_login_required": true,
+  "alert_on_error": true,
+
+  "close_tab_after_each": true,
+  "stop_on_preflight_fail": true,
+  "strict_consistency": false,
+  "timezone": "Asia/Shanghai",
+
+  "minutes_url": "https://www.acecamptech.com/search?type=minutes",
+  "tech_categories": ["AI", "TMT", "半导体"],
+
+  "filename_pattern": "文章日期_provider_文章id_文章名_crawl_date",
+  "sanitize_title": true
+}
