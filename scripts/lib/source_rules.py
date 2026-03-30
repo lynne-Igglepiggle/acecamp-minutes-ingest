@@ -17,6 +17,7 @@ def normalize_question_headings(text: str) -> str:
     section_pat = re.compile(r'^[一二三四五六七八九十]+、')
     # Match **bold** wrapped heading - can have text after the heading within same **...**
     section_pat_bold = re.compile(r'^\*\*([一二三四五六七八九十]+、[^**]*)\*\*')
+    question_pat_bold = re.compile(r'^\*\*(.+?[？?])\*\*$')
     
     for ln in text.splitlines():
         s = ln.strip()
@@ -31,6 +32,12 @@ def normalize_question_headings(text: str) -> str:
         if bold_match and not s.startswith('### '):
             heading_text = bold_match.group(1).rstrip()
             out.append('### ' + heading_text)
+            continue
+
+        # Bold-wrapped standalone question line -> question heading
+        q_bold_match = question_pat_bold.match(s)
+        if q_bold_match and not s.startswith('### '):
+            out.append('### ' + q_bold_match.group(1).strip())
             continue
             
         # Check for plain heading

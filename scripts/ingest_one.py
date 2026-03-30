@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+AceCamp source-level downstream processor.
+
+ROLE IN THE SKILL:
+- This is NOT the top-level user entrypoint.
+- It is the downstream processor that takes an already-built `source.md`
+  and completes render / pdf / manifest-index sync / consistency fix / validation.
+
+CALLERS:
+- `ingest_from_open_page.py`
+- future repair / re-render / re-index flows that already have source files
+"""
 import argparse
 import re
 import sys
@@ -8,22 +20,36 @@ from openpyxl import load_workbook
 from lib.config import load_config
 from lib.error_log import append_error_log
 from lib.source_rules import validate_source_file
-from render_template import render_file
-from upsert_index_manifest import upsert_all
-from validate_ingest_output import run_check
-from render_pdf import render_rendered_to_pdf, copy_pdf_to_share
+from lib.html_renderer import render_file
+from lib.index_updater import upsert_all
+from lib.output_validator import run_check
+from lib.pdf_renderer import render_rendered_to_pdf
 
 
-def extract_source_industry_tags(source_path: Path):
+def extract_source_metadata(source_path: Path):
     txt = source_path.read_text(encoding='utf-8')
     m_ind = re.search(r'^- 行业：(.+)$', txt, flags=re.M)
     industry = m_ind.group(1).strip() if m_ind else ''
+
     tags = []
     if '## 五、标签（页面可见）' in txt:
         sec = txt.split('## 五、标签（页面可见）', 1)[1]
         sec = sec.split('## 六、专家与作者信息', 1)[0]
         tags = [ln[2:].strip() for ln in sec.splitlines() if ln.startswith('- ')]
-    return industry, tags
+
+    author = ''
+    co_publisher = ''
+    if '## 六、专家与作者信息（页面可见）' in txt:
+        sec = txt.split('## 六、专家与作者信息（页面可见）', 1)[1]
+        sec = sec.split('## 七、补充说明', 1)[0]
+        m_author = re.search(r'^- 发布人：(.+)$', sec, flags=re.M)
+        if m_author:
+            author = m_author.group(1).strip()
+        m_co = re.search(r'^- 联合发布人：(.+)$', sec, flags=re.M)
+        if m_co:
+            co_publisher = m_co.group(1).strip()
+
+    return industry, tags, author, co_publisher
 
 
 def auto_fix_consistency(article_id: str, source_path: Path, strict_consistency: bool, source_url: str):
@@ -31,7 +57,7 @@ def auto_fix_consistency(article_id: str, source_path: Path, strict_consistency:
     manifest_path = ws_root / 'acecamp-raw' / 'index' / 'manifest.jsonl'
     index_path = ws_root / 'acecamp-raw' / 'index' / '索引.xlsx'
 
-    src_industry, src_tags = extract_source_industry_tags(source_path)
+    src_industry, src_tags, _src_author, _src_co = extract_source_metadata(source_path)
 
     # manifest patch
     rows = []
@@ -118,15 +144,21 @@ def main():
         min_body_chars=min_body_chars,
     )
 
-    # 同步生成 PDF，并拷贝到 acecamp-raw/share 目录，便于统一分享
-    rendered_pdf_path = rendered_path.with_suffix('.pdf')
+    # 直接生成 PDF 到 acecamp-raw/share 目录，避免 rendered 目录同时堆放 html+pdf
+    share_dir = rendered_path.parents[1] / 'share'
+    share_dir.mkdir(parents=True, exist_ok=True)
+    share_pdf_path = share_dir / rendered_path.with_suffix('.pdf').name
     render_rendered_to_pdf(
         rendered_html=rendered_path,
-        rendered_pdf=rendered_pdf_path,
+        rendered_pdf=share_pdf_path,
     )
-    copy_pdf_to_share(rendered_pdf_path)
 
-    tags = [t.strip() for t in args.tags.replace('，', ',').split(',') if t.strip()]
+    src_industry, src_tags, src_author, src_co_publisher = extract_source_metadata(source_path)
+    tags = src_tags if src_tags else [t.strip() for t in args.tags.replace('，', ',').split(',') if t.strip()]
+    industry = src_industry if src_industry else args.industry
+    author = src_author if src_author else args.author
+    co_publisher = src_co_publisher if src_co_publisher else args.co_publisher
+
     entry = {
         'article_date': args.article_date,
         'provider': args.provider,
@@ -139,10 +171,10 @@ def main():
         'rendered_path': str(rendered_path),
         'status': 'ok',
         'content_type': args.content_type,
-        'industry': args.industry,
+        'industry': industry,
         'tags': tags,
-        'author': args.author,
-        'co_publisher': args.co_publisher,
+        'author': author,
+        'co_publisher': co_publisher,
     }
     upsert_all(entry)
 

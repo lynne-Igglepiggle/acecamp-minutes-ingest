@@ -1,97 +1,97 @@
 # scripts/README.md
 
-`skills/acecamp-minutes-ingest/scripts` 目录说明（按用途分组）
+`skills/acecamp-minutes-ingest/scripts` 目录说明（按当前重构后结构）
 
-## 配置初始化
+## 顶层入口（外层应尽量少）
 
-**方式1（推荐）**: 运行 `preflight_check.py`，会自动提示输入账号密码：
-```bash
-python3 skills/acecamp-minutes-ingest/scripts/preflight_check.py
-# 按提示输入 Phone/Email 和 Password
-```
-
-**方式2**: 手动创建配置文件：
-```bash
-cp skills/acecamp-minutes-ingest/config.example.json acecamp-raw/config.json
-# 编辑 acecamp-raw/config.json，填入真实账号密码等
-```
-
-敏感配置（密码等）放在 `acecamp-raw/config.json`，不要放在 skill 目录。
-
-## 核心入口（优先使用）
-
-1. `preflight_check.py`
-- 作用：执行环境与配置预检（Python/openpyxl/config/hook）
+### 1. `preflight_check.py`
+- 作用：执行环境与配置预检（Python / openpyxl / playwright / config / hook）
 - 通过标志：`PREFLIGHT_OK`
 
-2. `extract_detail_to_source.py`
-- 作用：将详情抽取结果（detail json）规范化生成标准 `source.md`
-- 包含问句标题规范化（支持 `?` / `？`）
+### 2. `ingest_from_open_page.py`
+- 作用：**单篇网页入库主入口**
+- 适用：浏览器已定位到 `/article/detail/<id>` 页面时，日常单篇入库优先用它
+- 内部链路：
+  - `lib/detail_extractor.py`
+  - `lib/source_builder.py`
+  - `ingest_one.py`
+  - `lib/output_validator.py`
 
-3. `ingest_one.py`
-- 作用：单篇入库主入口（校验 → 渲染 → manifest/index 同步 → 一致性修正）
-- 默认读取 `acecamp-raw/config.json` 中 `strict_consistency` / `min_body_chars`，CLI 可覆盖
-- 敏感配置（密码等）放在 `acecamp-raw/config.json`，不要放在 skill 目录
+### 3. `search_and_ingest.py`
+- 作用：**关键词 / 搜索入库主入口**
+- 适用：像“录入一篇 AXTI 相关纪要”“按关键词批量入库”这类搜索驱动场景
+- 当前职责：挑候选 → 生成/执行对 `ingest_from_open_page.py` 的委派
 
-## 规则与辅助
-
-4. `workflow_helpers.py`
-- 作用：流程辅助（tab 复用解析、候选文章选择、open 动作保护）
-- 关键命令：
-  - `resolve-tab`
-  - `pick-candidates`
-  - `guard-open`
-
-5. `validate_staged_sources.py`
-- 作用：用于 pre-commit 的 staged source 校验
-- 仅在 staged 命中 `acecamp-raw/source/*.md` 时触发
-
-6. `render_pdf.py`
-- 作用：`rendered.html` 生成对应 `rendered.pdf`，并同步到 `acecamp-raw/share/` 作为统一分享目录
-- 说明：`ingest_one.py` 入库时默认生成 `rendered.pdf` 并同步到 `acecamp-raw/share/`
-
-## 质量保障与记录
-
-7. `validate_ingest_output.py`
-- 作用：`source.md` 与 `rendered.html` 统一质量验收（问题蓝色、红/蓝字、列表、图片、标题映射）
-- 建议：每次新入库前后执行；在 `ingest_one.py` 中已自动联动执行
-
-8. `regression_samples_check.py`
-- 作用：一键回归检查 3 个样本（70560067/70560083/70560077）
-- 建议：每次改脚本后先跑一遍
-
-9. `log_issue.py`
-- 作用：标准化追加 `acecamp-raw/logs/error-log.jsonl`
-- 用于人工指出问题后的快速落 log
-
-## 底层模块
-
-8. `lib/`
-- `config.py`：统一配置读取与默认值（优先读取 `acecamp-raw/config.json`）
-- `error_log.py`：统一 error-log 追加
-- `source_rules.py`：统一问句规范化/正文校验
+### 4. `ingest_one.py`
+- 作用：**source 级下游处理器**（不是顶层主入口）
+- 负责：source 校验 → html 渲染 → pdf 导出 → manifest/index 同步 → 一致性修正 → output validate
+- 心智模型：`source.md` 已经存在时，才轮到它出场
 
 ---
 
-## 建议执行顺序
+## 内部实现（已下沉到 `lib/`）
 
-1) `preflight_check.py`
-2) （需要时）`workflow_helpers.py pick-candidates`
-3) `extract_detail_to_source.py`
-4) `ingest_one.py`（自动执行 `validate_ingest_output.py`，并生成 `rendered.pdf` + 统一放入 `acecamp-raw/share/`）
-5) （可选）`validate_ingest_output.py`（单篇人工复核）
-6) （脚本变更后）`regression_samples_check.py`
-7) （有人工反馈时）`log_issue.py`
+### `lib/source_builder.py`
+- `detail.json -> source.md`
 
-## 补漏模式
+### `lib/html_renderer.py`
+- `source.md -> rendered.html`
 
-1) 在 AceCamp 页面内查看目标列表并按可见内容直接判断范围。
-2) 复制页面快照文本。
-3) 用 `pick-candidates` 做未入库对比：
+### `lib/pdf_renderer.py`
+- `rendered.html -> share/*.pdf`
 
-```bash
-python3 skills/acecamp-minutes-ingest/scripts/workflow_helpers.py pick-candidates \
-  --snapshot-path <minutes_snapshot.txt> \
-  --manifest-path acecamp-raw/index/manifest.jsonl \
-  --window-days 3
-```
+### `lib/index_updater.py`
+- `manifest.jsonl / 索引.xlsx` 更新
+
+### `lib/output_validator.py`
+- source / rendered 一致性验收
+
+### 其他底层模块
+- `lib/config.py`：统一配置读取与默认值
+- `lib/error_log.py`：统一 error-log 追加
+- `lib/source_rules.py`：统一正文规则 / 问句规范 / source 校验
+
+---
+
+## 辅助脚本
+
+### `login_policy.py`
+- 作用：AceCamp 登录策略 / policy 输出入口，同时也是登录执行入口
+- 规则补充：AceCamp 登录默认按无滑块密码登录流处理；若点击“登录”未成功提交，且真实页面无阻断异常，可补发一次 `Enter` 作为提交兜底
+- 当前支持：
+  - 默认输出脱敏 policy JSON
+  - `--emit-executor-js` 输出可供浏览器 evaluate 执行的标准登录脚本
+
+### `log_issue.py`
+- 作用：标准化追加 `acecamp-raw/logs/error-log.jsonl`
+
+---
+
+## 质量保障与开发期工具
+
+### `regression_samples_check.py`
+- 作用：回归样本检查
+
+### `validate_staged_sources.py`
+- 作用：用于 pre-commit 的 staged source 校验
+
+---
+
+## 当前建议执行顺序
+
+1. `preflight_check.py`
+2. 单篇优先：`ingest_from_open_page.py`
+3. 搜索/关键词：`search_and_ingest.py`
+4. 如需拆步调试：`lib/detail_extractor.py` → `lib/source_builder.py` → `ingest_one.py`
+5. 如有样式 / 规则修改后，跑 `regression_samples_check.py`
+6. 如有人工反馈，跑 `log_issue.py`
+
+---
+
+## 一句话理解
+
+- `search_and_ingest.py` = 找哪篇
+- `ingest_from_open_page.py` = 录这篇
+- `lib/detail_extractor.py` = 从页面抽 detail
+- `lib/source_builder.py` = detail 变 source
+- `ingest_one.py` = source 变最终产物
